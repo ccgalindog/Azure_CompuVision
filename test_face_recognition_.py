@@ -14,74 +14,22 @@ from msrest.authentication import CognitiveServicesCredentials
 from azure.cognitiveservices.vision.face.models import TrainingStatusType, Person
 
 
-# This key will serve all examples in this document.
-KEY = 
-# This endpoint will be used in all examples in this quickstart.
-ENDPOINT = 
-# Create an authenticated FaceClient.
-face_client = FaceClient(ENDPOINT, CognitiveServicesCredentials(KEY))
 
+"""
+This code uses an existing PersonGroup to perform inferences on new images.
+For each testing image passed, a new output image is generated with the corresponding tags for each person,
+including his/her approximate age, mood and name, if recognized. 
 
-# Used in the Person Group Operations and Delete Person Group examples.
-# You can call list_person_groups to print a list of preexisting PersonGroups.
-# SOURCE_PERSON_GROUP_ID should be all lowercase and alphanumeric. For example, 'mygroupname' (dashes are OK).
-PERSON_GROUP_ID = 'the_office_cast_3' # str(uuid.uuid4()) # assign a random ID (or name it anything)
+Parameters:
 
+KEY: The access key provided by Face API on Azure.
+ENDPOINT: The link to the server where Face API runs, for instance: "https://myfacesbook.cognitiveservices.azure.com/"
+PERSON_GROUP_ID: The title name of the PersonGroup you already trained.
+TEST_IMG_FOLDER: The path to the folder which contains all testing images.
+OUTPUT_FOLDER: Path where output (tagged) images will be saved.
 
-
-'''
-Identify a face against a defined PersonGroup
-'''
-# Group image for testing against
-test_image_array = glob.glob('Images/Scenes/scene_4_.jpg')
-image = open(test_image_array[0], 'r+b')
-
-print('Pausing for 60 seconds to avoid triggering rate limit on free account...')
-time.sleep (60)
-
-# Detect faces
-face_ids = []
-# We use detection model 2 because we are not retrieving attributes.
-faces = face_client.face.detect_with_stream(image, detectionModel='detection_02')
-
-
-
-for face in faces:
-	if len(face_ids) < 9:
-		face_ids.append(face.face_id)
-
-
-
-# Identify faces
-
-
-
-results = face_client.face.identify(face_ids, PERSON_GROUP_ID)
-
-
-
-#print( face_ids )
-
-found_people = {}
-
-print('Identifying faces in {}'.format(os.path.basename(image.name)))
-if not results:
-	print('No person identified in the person group for faces from {}.'.format(os.path.basename(image.name)))
-for person in results:
-	#print( person )
-	if len(person.candidates) > 0:
-		#found_u = person.face_id
-		#certainty_u = person.candidates[0].confidence
-		#print(person.candidates[0].person_id  )
-		name_person = face_client.person_group_person.get( PERSON_GROUP_ID, person.candidates[0].person_id )
-		found_people[ person.face_id ] = [name_person.name, person.candidates[0].confidence]
-		
-		print('Person for face ID {} is identified in {} to be {} with a confidence of {}.'.format(person.face_id,
-						os.path.basename(image.name), name_person.name, person.candidates[0].confidence)) # Get topmost confidence score
-	else:
-		found_people[ person.face_id ] = ['Unknown', -1]
-		print('No person identified for face ID {} in {}.'.format(person.face_id, os.path.basename(image.name)))
-
+After this model has been trained, you should be able to perform inferences on new images and recognize whether a person in this PersonGroup is there or not.
+"""
 
 def getRectangle(faceDictionary ):
 	rect = faceDictionary.face_rectangle
@@ -92,27 +40,91 @@ def getRectangle(faceDictionary ):
 
 	return ((left, top), (right, bottom))
 
+def get_emotion(emoObject):
+	emoDict = dict()
+	emoDict['anger'] = emoObject.anger
+	emoDict['contempt'] = emoObject.contempt
+	emoDict['disgust'] = emoObject.disgust
+	emoDict['fear'] = emoObject.fear
+	emoDict['happiness'] = emoObject.happiness
+	emoDict['neutral'] = emoObject.neutral
+	emoDict['sadness'] = emoObject.sadness
+	emoDict['surprise'] = emoObject.surprise
+	emo_name = max(emoDict, key=emoDict.get)
+	emo_level = emoDict[emo_name]
+	return emo_name, emo_level
 
 
 
 
+@click.command()
+@click.option('--KEY', default='', help='Key to Face API.')
+@click.option('--ENDPOINT', default='', help='Endpoint to Face API')
+@click.option('--PERSON_GROUP_ID', default='', help='Desired name for the person group.')
+@click.option('--TEST_IMG_FOLDER', default='Images/Test_Images', help='Path to the folder that contains testing images.')
+@click.option('--OUTPUT_FOLDER', default='Outputs', help='Path to the folder where output images will be saved.')
 
-print('Drawing rectangle around face... see popup for results.')
+def main( KEY, ENDPOINT, PERSON_GROUP_ID, TEST_IMG_FOLDER, OUTPUT_FOLDER):
 
-img = Image.open( test_image_array[0] )
-draw = ImageDraw.Draw(img)
-fnt = ImageFont.truetype("Pillow/Tests/fonts/FreeMono.ttf", 80)
-for face in faces:
-	try:
-		dis_list_results= found_people[ face.face_id ]
-		bounding_rect = getRectangle(face)
-		draw.rectangle( bounding_rect, outline='crimson', width = 2)
-		if dis_list_results[0] != 'Unknown':
-			draw.text( bounding_rect[0] , dis_list_results[0] + '  {:.2f}%'.format( 100*dis_list_results[1] ), fill=(255,255,255,255))
-		else:
-			draw.text( bounding_rect[0] , dis_list_results[0], fill=(255,255,255,255))
-	except:
-		pass
-# Display the image in the users default image browser.
-img.show()
-img.save("Tagged_{}_.png".format( test_image_array[0].split('/')[-1].split('.')[0] ) )
+	face_client = FaceClient(ENDPOINT, CognitiveServicesCredentials(KEY))
+
+	test_image_array = glob.glob('{}/*'.format(TEST_IMG_FOLDER) )
+
+	for each_testimg in test_image_array:
+
+		image = open(each_testimg, 'r+b')
+
+		time.sleep( 60 )
+
+		face_ids = []
+
+		faces = face_client.face.detect_with_stream(image, detectionModel='detection_02',
+									return_face_attributes = ['emotion', 'age', 'gender'])
+
+
+		for face in faces:
+			if len(face_ids) < 9:
+				face_ids.append(face.face_id)
+
+
+		results = face_client.face.identify(face_ids, PERSON_GROUP_ID)
+
+		found_people = {}
+
+		print('Identifying faces in {}'.format(os.path.basename(image.name)))
+		if not results:
+			print('No person identified in the person group for faces from {}.'.format(os.path.basename(image.name)))
+		for person in results:
+			if len(person.candidates) > 0:
+
+				name_person = face_client.person_group_person.get( PERSON_GROUP_ID, person.candidates[0].person_id )
+				found_people[ person.face_id ] = [name_person.name, person.candidates[0].confidence]
+				
+				print('Person for face ID {} is identified in {} to be {} with a confidence of {}.'.format(person.face_id,
+								os.path.basename(image.name), name_person.name, person.candidates[0].confidence)) 
+			else:
+				found_people[ person.face_id ] = ['Unknown', -1]
+				print('No person identified for face ID {} in {}.'.format(person.face_id, os.path.basename(image.name)))
+
+
+
+		img = Image.open( test_image_array[0] )
+		draw = ImageDraw.Draw(img)
+		fnt = ImageFont.truetype("Pillow/Tests/fonts/FreeMono.ttf", 80)
+		for face in faces:
+			try:
+				dis_list_results= found_people[ face.face_id ]
+				bounding_rect = getRectangle(face)
+				draw.rectangle( bounding_rect, outline='crimson', width = 2)
+				emotion, confidence = get_emotion(face.face_attributes.emotion)
+				di_age = face.face_attributes.age
+				di_gender = face.face_attributes.gender
+				if dis_list_results[0] != 'Unknown':
+					draw.text( bounding_rect[0] , dis_list_results[0] + '  {:.2f}%'.format( 100*dis_list_results[1] ), fill=(255,255,255,255))
+				else:
+					draw.text( bounding_rect[0] , dis_list_results[0], fill=(255,255,255,255))
+				draw.text( bounding_rect[1] , emotion + '  {:.2f}%'.format( 100*confidence ) + ' Age: {} '.format(di_age) + di_gender, fill=(255,255,255,255))	
+			except:
+				pass
+		#img.show()
+		img.save("{}/Tagged_{}_.png".format( OUTPUT_FOLDER, test_image_array[0].split('/')[-1].split('.')[0] ) )
